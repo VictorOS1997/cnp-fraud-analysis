@@ -1,0 +1,22 @@
+rule,action,transactions,share_pct,frauds,recall_pct,precision_pct,precision_at_1pct_base,fraud_amount,fraud_amount_pct,legit_transactions,legit_users,legit_amount,legit_per_fraud,legit_per_fraud_at_1pct
+velocity_1+_prior_tx_24h,decline,363,11.35,221,56.5,60.9,10.1,277200.78,48.8,142,106,126838.72,0.64,8.9
+velocity_2+_prior_tx_24h,decline,170,5.31,131,33.5,77.1,19.6,171261.29,30.1,39,23,46934.28,0.3,4.1
+velocity_3+_prior_tx_24h,decline,102,3.19,81,20.7,79.4,21.9,110682.97,19.5,21,13,24451.3,0.26,3.6
+cards_2+_distinct,decline,192,6.0,144,36.8,75.0,17.9,198825.78,35.0,48,26,47772.33,0.33,4.6
+cards_3+_distinct,decline,131,4.1,104,26.6,79.4,21.8,156134.17,27.5,27,17,23044.04,0.26,3.6
+amount_above_expanding_p90,step-up,258,8.07,93,23.8,36.0,3.9,296302.54,52.1,165,152,496416.67,1.77,24.5
+no_device,score only,830,25.95,67,17.1,8.1,0.6,111962.38,19.7,763,716,588886.4,11.39,157.0
+tier_decline,decline,207,6.47,156,39.9,75.4,18.2,211225.98,37.2,51,29,59255.73,0.33,4.5
+tier_review,manual review,189,5.91,81,20.7,42.9,5.2,92074.57,16.2,108,103,77522.52,1.33,18.4
+tier_stepup,3DS step-up,197,6.16,45,11.5,22.8,2.1,152267.89,26.8,152,148,449848.94,3.38,46.6
+tier_approve,approve,2606,81.46,109,27.9,4.2,0.3,112778.18,19.8,2497,2435,1301259.67,22.91,315.8
+01-20 Nov (normal) — decline,decline,29,2.96,19,29.2,65.5,21.3,16884.85,14.3,10,4,24686.45,0.53,3.7
+01-20 Nov (normal) — review,review,43,4.39,12,18.5,27.9,5.2,13526.19,11.5,31,31,31903.17,2.58,18.2
+21 Nov-01 Dec (peak) — decline,decline,178,8.02,137,42.0,77.0,16.4,194341.13,43.1,41,26,34569.28,0.3,5.1
+21 Nov-01 Dec (peak) — review,review,146,6.58,69,21.2,47.3,5.0,78548.38,17.4,77,73,45619.35,1.12,19.0
+prior_chargeback_lag_0d,diagnostic,265,8.28,238,60.9,89.8,39.0,326944.91,57.5,27,16,26840.56,0.11,1.6
+prior_chargeback_lag_1d,diagnostic,116,3.63,96,24.6,82.8,25.8,128950.91,22.7,20,12,18394.84,0.21,2.9
+prior_chargeback_lag_3d,diagnostic,72,2.25,58,14.8,80.6,23.1,84123.72,14.8,14,8,16119.47,0.24,3.3
+prior_chargeback_lag_7d,diagnostic,36,1.13,31,7.9,86.1,31.0,49280.36,8.7,5,3,5728.88,0.16,2.2
+prior_chargeback_lag_15d,diagnostic,2,0.06,1,0.3,50.0,6.8,3863.2,0.7,1,1,10.02,1.0,13.8
+prior_chargeback_lag_21d,diagnostic,0,0.0,0,0.0,0.0,0.0,0.0,0.0,0,0,0.0,inf,inf
