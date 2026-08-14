@@ -11,10 +11,11 @@ volume out of **2,456,233.48** processed (**23.1% of all money moved**).
 
 ## TL;DR
 
-1. **More than half the loss comes from merchants that barely exist.** 83 merchants live **two
-   days or less** and take a chargeback: **314,016 disputed, 55.3% of the total**. No
-   chargeback-based control can reach them — they are gone before a dispute exists. The control
-   is underwriting, volume ramp limits for new merchants and settlement holds.
+1. **The cheapest control needs no chargeback at all.** Capping a merchant at **5 transactions
+   in its first 48 hours** blocks 61 transactions, of which **53 are fraud (86.9% precision,
+   68,838 — 12.1% of all disputed volume)**, at a cost of **8 legitimate transactions (4,211)**.
+   It fires before any dispute exists, which is why it reaches the burst-and-vanish merchants
+   that monitoring cannot.
 2. **Fraud arrives in bursts.** All 391 chargebacks belong to 153 users (5.7% of users, 14.2% of
    transactions), median activity span **19.3 hours**. Velocity and card cycling — both known
    instantly — are what detect it.
@@ -97,16 +98,25 @@ chargeback reason and date. Section 4 turns this into a prioritised data request
 
 | # | Finding | Evidence | Recommended action | Cost |
 |---|---|---|---|---|
-| F1 | **Disposable merchants carry the majority of the loss** | 83 merchants with a lifespan ≤2 days account for **314,016 disputed (55.3%)**. A monitoring batch triggering on 3+ transactions and 2+ known disputes stops **259,510 (45.7%) with instant labels, but only 14.3% at a 3-day delay** and 0.7% at 15 days | Underwriting, volume ramp limits and settlement holds for new merchants — monitoring alone cannot reach this profile | 50,742 of legitimate volume across 42 merchants at the instant-label setting |
+| F1 | **Fraud rides on brand-new merchants, and volume ramp catches it without any label** | Capping a merchant at 5 transactions in its first 48h: 61 blocked, **53 fraud (86.9% precision)**, 68,838 — **12.1% of disputed volume**. At 3 transactions/48h: 141 blocked, 104 fraud (73.8%), **26.1%** of disputed volume | Volume ramp limit plus settlement hold for new merchants | 8 legitimate transactions (4,211) at the 5/48h setting; 37 (20,305) at 3/48h |
 | F2 | **Fraud comes in short bursts by the same user** | From the user's 2nd transaction in 24h: 60.9% precision, 56.5% of all fraud (363 alerts). From the 3rd: **77.1% precision**, 33.5% (170 alerts) | Velocity limit: review from the 2nd, decline from the 3rd | 39 legitimate transactions from 23 customers (46,934) |
 | F3 | **Accounts cycle through cards** | 2nd distinct card: 75.0% precision, 36.8% of fraud. 3rd card: **79.4% precision**, 26.6% | Distinct-card limit: review at the 2nd, decline at the 3rd | 27 legitimate transactions from 17 customers (23,044) |
 | F4 | **Risk rises sharply with ticket size** | Bottom three amount deciles 1.9–3.4% chargeback; top decile (>2,075) **33.1%** | 3DS step-up above the 90th percentile of past amounts — not a hard cap | friction on 152 legitimate transactions; the sale survives authentication (assumption, see 6.2) |
-| F5 | **Merchant chargeback history is a slow signal, and this portfolio is too young for it** | Instant labels: 78.7% precision, 12.3% of fraud. At a 15-day delay: **1 transaction, 0 frauds**. Only 30 of 1,756 merchants ever reach 10 transactions; 70.7% have exactly one | Keep merchant risk as a **daily batch** with a low trigger (3+ transactions, 2+ disputes), and expect it to work properly only with months of history | No customer-level cost; commercial impact on the merchant |
+| F5 | **Merchant chargeback history is a slow signal, and this portfolio is too young for it** | A batch on 3+ transactions and 2+ known disputes, acting one cycle later, stops **18.2% of disputed volume with instant labels and 6.9% at a 3-day label delay**. With the original 10-transaction trigger: 3.8%. Only 30 of 1,756 merchants ever reach 10 transactions; 70.7% have exactly one | Keep merchant risk as a **daily batch** with a low trigger (3+ transactions, 2+ disputes), and expect it to work properly only with months of history | 26 legitimate transactions (23,682) across 42 merchants |
 | F6 | **Night hours are elevated but weak** | 00:00–05:59: 346 transactions, 17.3% precision (peak 02:00 at 29.5% over 61 transactions) | Score factor only — never a standalone block | Blocking the window would cost 286 legitimate transactions for 60 frauds |
 | F7 | **Missing device is *not* a fraud signal here** | 830 transactions without `device_id`: **8.1%** chargeback vs 13.7% with device — below the base rate | Do not build a rule on it; still close the collection gap, since a 26% blind spot caps every device rule | Hypothesis rejected — a rule here would have produced 763 false positives |
 
 **Overlap matters.** F2 and F3 fire on 170 and 131 transactions, but 94 are the same transactions
 (79 of them fraud). Their union is **207**, not 301 — coverage cannot be added up.
+
+**A tempting finding that does not survive its base rate.** 83 merchants with a chargeback have
+a lifespan of two days or less, carrying 55.3% of the disputed volume — which looks like a
+headline until you check the other side: **82% of merchants with no chargeback at all are also
+short-lived** (1,349 of 1,638), because 70.7% of the portfolio has a single transaction and the
+window is only 30 days. On top of that, 36 of those 83 have exactly one transaction (lifespan is
+zero by construction) and 27 are still active in the final two days (right-censored). Short
+lifespan does not discriminate here, and without a merchant onboarding date it cannot be
+measured. What does discriminate is **volume compressed into the first hours** — F1.
 
 ### 3.2 F0 — the finding that changed the recommendation
 
@@ -168,9 +178,10 @@ Ranked by value over effort. Each item is tied to a pattern that is invisible to
    testing — dozens of declines before one success — is the most characteristic CNP fraud
    footprint and is entirely absent here: our card-testing rule fired **twice** in 3,199
    transactions for exactly this reason.
-2. **Merchant onboarding data (age, category, expected volume, ownership).** F1 shows the largest
-   single share of the loss sits with merchants that live two days. Nothing in this dataset can
-   flag a merchant *before* its first chargeback; onboarding data can.
+2. **Merchant onboarding data (age, category, expected volume, ownership).** The volume-ramp
+   control in F1 currently has to use the first *observed* transaction as a proxy for the
+   merchant's age, which lets an old low-volume merchant into the cut. A real onboarding date
+   turns a ceiling into a measurement — and lets us flag a merchant before its first chargeback.
 3. **Account and card age (KYC).** At 1.18 transactions per user there is no behavioural
    baseline. Knowing an account was created minutes before a high-ticket purchase separates a
    new customer from an attack — and the data already exists internally.
@@ -192,8 +203,8 @@ per-query cost and contracts.
 
 | # | Measure | Threshold | Cost |
 |---|---|---|---|
-| 1 | **New-merchant controls**: volume ramp limit and settlement hold until a minimum history exists | applies to every merchant in its first days | delays payout for legitimate new merchants — the only control that reaches the 55.3% of loss in F1 |
-| 2 | **Merchant monitoring batch** (daily) | 3+ transactions and 2+ known disputes → investigate, hold, offboard | at instant labels: 42 merchants actioned, 259,510 stopped, 50,742 of legitimate volume affected. At a 3-day label delay this drops to 14.3% — quote both |
+| 1 | **New-merchant volume ramp** + settlement hold | max 5 transactions in the merchant's first 48h (tighten to 3 for more coverage) | 8 legitimate transactions (4,211) for 53 frauds — 86.9% precision, 12.1% of disputed volume. At 3/48h: 26.1% coverage for 37 legitimate transactions |
+| 2 | **Merchant monitoring batch** (daily) | 3+ transactions and 2+ known disputes → investigate, hold, offboard | acting one cycle later: 18.2% of disputed volume with instant labels, 6.9% at a 3-day label delay, 26 legitimate transactions affected — quote the delayed figure, it is the real one |
 | 3 | **Velocity limit per user** | review from the 2nd transaction in 24h, decline from the 3rd | 39 legitimate transactions, 23 customers (46,934), for 131 frauds |
 | 4 | **Distinct-card limit per account** | review at the 2nd card, decline at the 3rd | 27 legitimate transactions, 17 customers (23,044), for 104 frauds |
 | 5 | **3DS step-up above the 90th percentile of amount** | expanding quantile over past amounts | friction on 152 legitimate transactions; abandonment cost unknown (6.2) |

@@ -43,6 +43,8 @@ VELOCITY_REVIEW_PRIOR_TX = 1     # review from the user's 2nd transaction in the
 VELOCITY_DECLINE_PRIOR_TX = 2    # decline from the 3rd
 CARDS_REVIEW = 2                 # review once a 2nd distinct card is seen
 CARDS_DECLINE = 3                # decline at the 3rd
+# NOTE: 10 is the *diagnostic* threshold kept for comparison with 02_rules.py. The recommended
+# batch trigger is lower — 3 transactions and 2 known disputes — see the merchant grid below.
 MERCHANT_MIN_TX = 10             # minimum merchant history before judging it
 MERCHANT_RATE_MULTIPLE = 2.0     # merchant rate above 2x the running base rate
 AMOUNT_STEPUP_Q = 0.90           # step-up above this quantile of past amounts
@@ -109,6 +111,7 @@ def replay(df: pd.DataFrame) -> pd.DataFrame:
         m_tx = len(m_times)
         m_tx_known = bisect_left(m_times, known_cutoff)
         m_cbk_ages = [(now - t).total_seconds() / 86400 for t in m_cbk_times]
+        m_age_h = (now - m_times[0]).total_seconds() / 3600 if m_times else 0.0
         m_rate = len(m_cbk_times) / m_tx if m_tx else 0.0
         m_cbk_known = bisect_left(m_cbk_times, known_cutoff)
         m_rate_known = m_cbk_known / m_tx_known if m_tx_known else 0.0
@@ -136,6 +139,7 @@ def replay(df: pd.DataFrame) -> pd.DataFrame:
                 "user_cbk_ages": user_cbk_ages,
                 "days_since_last_cbk": days_since_last_cbk,
                 "merchant_prior_tx": m_tx,
+                "merchant_age_h": m_age_h,
                 "merchant_prior_cbk": len(m_cbk_times),
                 "merchant_cbk_ages": m_cbk_ages,
                 "merchant_prior_cbk_rate": m_rate,
@@ -172,13 +176,17 @@ def flag_prior_cbk(df: pd.DataFrame, lag_days: int) -> pd.Series:
 
 
 def merchant_action_impact(
-    df: pd.DataFrame, min_tx: int, min_cbk: int, lag_days: int
+    df: pd.DataFrame, min_tx: int, min_cbk: int, lag_days: int, action_delay_h: int = 0
 ) -> dict:
-    """Prospective value of a daily merchant-monitoring batch.
+    """Prospective value of a merchant-monitoring batch.
 
-    A merchant is actioned from the first transaction where the trigger fires; the value
-    credited is only the loss that happens AFTER that moment — never the whole month, which
-    is only knowable in hindsight.
+    Two independent clocks, both parameterised:
+      lag_days       — how long a dispute takes to reach the engine
+      action_delay_h — how long the batch takes to act once the trigger is true
+                       (a daily batch acts on the next cycle, not instantly)
+
+    The value credited is only the loss occurring AFTER the merchant is actioned — never the
+    whole month, which is knowable only in hindsight.
     """
     fires = (
         (df["merchant_prior_tx"] >= min_tx)
@@ -191,19 +199,46 @@ def merchant_action_impact(
     after = pd.Series(False, index=df.index)
     triggered_merchants = 0
     for mid, idx in df.loc[fires].groupby("merchant_id").groups.items():
-        first = min(idx)
+        acts_at = df.loc[min(idx), "transaction_date"] + pd.Timedelta(hours=action_delay_h)
         triggered_merchants += 1
-        after |= (df["merchant_id"] == mid) & (df.index >= first)
+        after |= (df["merchant_id"] == mid) & (df["transaction_date"] >= acts_at)
 
     blocked = df.loc[after]
     fraud = blocked.loc[blocked["has_cbk"]]
     legit = blocked.loc[~blocked["has_cbk"]]
     return {
-        "trigger": f"{min_tx}+ tx and {min_cbk}+ disputes, {lag_days}d lag",
+        "trigger": f"{min_tx}+ tx, {min_cbk}+ disputes, {lag_days}d label lag, "
+                   f"{action_delay_h}h to act",
         "merchants_actioned": triggered_merchants,
         "transactions_stopped": len(blocked),
         "frauds_stopped": len(fraud),
         "fraud_amount_stopped": round(fraud["transaction_amount"].sum(), 2),
+        "pct_of_disputed_volume": round(
+            fraud["transaction_amount"].sum() / total_fraud_amount * 100, 1
+        ),
+        "legit_transactions": len(legit),
+        "legit_amount": round(legit["transaction_amount"].sum(), 2),
+    }
+
+
+def volume_ramp_impact(df: pd.DataFrame, max_tx: int, window_h: int) -> dict:
+    """A new-merchant volume ramp limit: no chargeback needed to trigger it.
+
+    Blocks a transaction when the merchant is still inside its first `window_h` hours of
+    observed activity and has already processed `max_tx` transactions.
+    """
+    mask = (df["merchant_age_h"] <= window_h) & (df["merchant_prior_tx"] >= max_tx)
+    total_fraud_amount = df.loc[df["has_cbk"], "transaction_amount"].sum()
+    blocked = df.loc[mask]
+    fraud = blocked.loc[blocked["has_cbk"]]
+    legit = blocked.loc[~blocked["has_cbk"]]
+    return {
+        "rule": f"max {max_tx} transactions in the merchant's first {window_h}h",
+        "merchants_hit": blocked["merchant_id"].nunique(),
+        "transactions_blocked": len(blocked),
+        "frauds_blocked": len(fraud),
+        "precision_pct": round(len(fraud) / len(blocked) * 100, 1) if len(blocked) else 0.0,
+        "fraud_amount_blocked": round(fraud["transaction_amount"].sum(), 2),
         "pct_of_disputed_volume": round(
             fraud["transaction_amount"].sum() / total_fraud_amount * 100, 1
         ),
@@ -457,25 +492,56 @@ def main() -> int:
     print("The top-10 concentration above is an autopsy. What a daily batch would actually save")
     print("is the loss that happens after it fires, so that is what is measured here.\n")
     combos = [
-        (MERCHANT_MIN_TX, 1, 0), (MERCHANT_MIN_TX, 1, 3), (MERCHANT_MIN_TX, 1, DISPUTE_LAG_DAYS),
-        (3, 2, 0), (3, 2, 3), (3, 2, DISPUTE_LAG_DAYS),
-        (2, 1, 0), (2, 1, 3),
+        (MERCHANT_MIN_TX, 1, 0, 0), (MERCHANT_MIN_TX, 1, 3, 24),
+        (3, 2, 0, 0), (3, 2, 0, 24), (3, 2, 3, 24), (3, 2, DISPUTE_LAG_DAYS, 24),
+        (2, 1, 0, 0), (2, 1, 0, 24), (2, 1, 3, 24),
     ]
     merchant_grid = pd.DataFrame(
-        [merchant_action_impact(df, mt, mc, lag) for mt, mc, lag in combos]
+        [merchant_action_impact(df, mt, mc, lag, delay) for mt, mc, lag, delay in combos]
     )
     print(merchant_grid.to_string(index=False))
+    print("\nTwo clocks matter: how long the dispute takes to arrive, and how long the batch takes")
+    print("to act. A daily batch acts on the next cycle — the 24h rows are the honest ones.")
 
-    fast = merchants.loc[merchants["frauds"] > 0].copy()
-    spans = raw.groupby("merchant_id")["transaction_date"].agg(["min", "max"])
-    fast["life_days"] = (spans["max"] - spans["min"]).dt.total_seconds() / 86400
-    burner = fast.loc[fast["life_days"] <= 2]
-    print(f"\nmerchants that live 2 days or less and take a chargeback: {len(burner)}, "
-          f"{burner['fraud_amount'].sum():,.2f} disputed "
-          f"({burner['fraud_amount'].sum() / fraud_amount * 100:.1f}% of the total)")
-    print("No chargeback-based control reaches these: they are gone before the dispute exists.")
-    print("The control for them is underwriting, new-merchant volume ramp limits and settlement")
-    print("holds — not monitoring.")
+    # --------------------------------------------- does a short lifespan discriminate?
+    section("SHORT-LIVED MERCHANTS — testing the intuition against a base rate")
+    spans = raw.groupby("merchant_id")["transaction_date"].agg(["min", "max", "size"])
+    spans["life_days"] = (spans["max"] - spans["min"]).dt.total_seconds() / 86400
+    spans["frauds"] = raw.groupby("merchant_id")["has_cbk"].sum()
+    spans["fraud_amount"] = merchants["fraud_amount"]
+
+    dirty = spans.loc[spans["frauds"] > 0]
+    clean = spans.loc[spans["frauds"] == 0]
+    short_dirty = dirty.loc[dirty["life_days"] <= 2]
+    short_clean = clean.loc[clean["life_days"] <= 2]
+    print(f"merchants with a chargeback living <=2 days   : {len(short_dirty)} of {len(dirty)} "
+          f"({len(short_dirty) / len(dirty) * 100:.0f}%), {short_dirty['fraud_amount'].sum():,.2f} "
+          f"disputed ({short_dirty['fraud_amount'].sum() / fraud_amount * 100:.1f}%)")
+    print(f"merchants with NO chargeback living <=2 days  : {len(short_clean)} of {len(clean)} "
+          f"({len(short_clean) / len(clean) * 100:.0f}%)")
+    print(f"of the short-lived merchants with fraud, "
+          f"{int((short_dirty['size'] == 1).sum())} have a single transaction and "
+          f"{int((dirty.loc[dirty['life_days'] <= 2, 'max'] >= df['transaction_date'].max() - pd.Timedelta(days=2)).sum())} "
+          f"are still active in the last two days of the window (right-censored).")
+    print("\nSo lifespan does NOT discriminate: most legitimate merchants here are also short-lived,")
+    print("because 70.7% of the portfolio has a single transaction and the window is 30 days long.")
+    print("Without an onboarding date this variable cannot be measured. What DOES discriminate is")
+    print("volume compressed into the merchant's first hours — measured next.")
+
+    # ---------------------------------------------------- new-merchant volume ramp
+    section("NEW-MERCHANT VOLUME RAMP — a control that needs no chargeback at all")
+    ramp_grid = pd.DataFrame([
+        volume_ramp_impact(df, 3, 48),
+        volume_ramp_impact(df, 5, 48),
+        volume_ramp_impact(df, 5, 24),
+        volume_ramp_impact(df, 10, 48),
+    ])
+    print(ramp_grid.to_string(index=False))
+    print("\nThis is the only merchant control that fires before any dispute exists, which is why")
+    print("it reaches the burst-and-vanish profile that monitoring cannot.")
+    print("Caveat: without an onboarding date, 'first hours' means first *observed* transaction —")
+    print("an old, low-volume merchant can enter the cut. This is a ceiling, not a measurement,")
+    print("and one more reason to bring merchant onboarding data into the base.")
 
     # ------------------------------------------------------------ real-time rules
     section("REAL-TIME RULES — no chargeback knowledge required")
