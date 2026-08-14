@@ -1,0 +1,5 @@
+pandas>=2.0
+matplotlib>=3.7
+
+# Optional — only if you decide to run SQL over the CSV instead of pandas.
+# duckdb>=1.0

@@ -1,0 +1,16 @@
+# data (reproducible via scripts/00_download_data.py)
+data/raw/
+data/processed/
+
+# environment
+.venv/
+__pycache__/
+*.pyc
+
+# tooling and internal material (not part of the deliverable)
+.claude/
+*.pdf
+
+# system
+.DS_Store
+Thumbs.db
