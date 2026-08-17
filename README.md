@@ -121,6 +121,50 @@ ones are safe for a real-time rule and which are descriptive only — are docume
 | F6 | **Night hours are elevated but weak** | 00:00–05:59: 346 transactions, 17.3% precision (peak 02:00 at 29.5% over 61 transactions) | Score factor only — never a standalone block | Blocking the window would cost 286 legitimate transactions for 60 frauds |
 | F7 | **Missing device is *not* a fraud signal here** | 830 transactions without `device_id`: **8.1%** chargeback vs 13.7% with device — below the base rate | Do not build a rule on it; still close the collection gap, since a 26% blind spot caps every device rule | Hypothesis rejected — a rule here would have produced 763 false positives |
 
+### The evidence behind the table
+
+**Every extra transaction a user makes multiplies the risk: 2.6% chargeback for users who
+transact once, 86.6% for those with eleven or more.** This is F2, and it is the signal the whole
+policy is built on — no label required, known the instant the transaction arrives.
+
+![Chargeback rate by number of transactions per user, rising from 2.6% at one transaction to 86.6% at eleven or more](outputs/figures/04_chargeback_by_user_velocity.png)
+
+*The `n=` labels matter: the high-risk buckets are small. 2,469 of the 3,199 transactions come
+from users who appear exactly once.*
+
+**Fraud has a price tag: the median fraudulent ticket is 999 against 360 for legitimate
+transactions, and the top amount decile carries a 33.1% chargeback rate.** That is F4 — and the
+reason the recommendation is a 3DS challenge above the 90th percentile rather than a hard cap.
+
+![Boxplot comparing transaction amounts, median 360 without chargeback against 999 with chargeback](outputs/figures/02_amount_distribution.png)
+
+**Risk is not spread evenly across merchants — the worst ones sit far above the 12.22% base
+rate.** This is where F5 starts, and where the largest single share of the loss is concentrated.
+
+![Chargeback rate for the riskiest merchants, all far above the dashed 12.22% base rate line](outputs/figures/03_chargeback_by_merchant.png)
+
+*Only merchants with at least 10 transactions are ranked — 30 of 1,756. Below that volume a
+percentage is noise, which is exactly the limitation F5 quantifies.*
+
+**Fraud concentrates at night, but almost nothing happens at night — which is why the signal is
+weak.** The bars are volume, the line is the chargeback rate: the peak at 02:00 reaches 29.5%
+over just 61 transactions. F6 in one picture.
+
+![Transactions per hour with chargeback rate overlaid, peaking at 02:00 where volume is lowest](outputs/figures/01_chargeback_by_hour.png)
+
+*The rate is only drawn for hours with at least 30 transactions. Without that filter, an hour
+with two transactions and one chargeback would show as 50%.*
+
+**Screening all twelve signals at once: coverage against precision decides what becomes a block
+and what becomes a queue.** Rules with high precision and low coverage are candidates for an
+automatic decline; the reverse belongs in a review queue and never in a hard block.
+
+![Bar chart of the twelve rules comparing fraud caught against precision, with the base rate marked](outputs/figures/06_rule_performance.png)
+
+*Read this one with care: it is the **descriptive** pass. `R02_repeat_offender` and
+`R10_high_risk_merchant` assume the chargeback is known instantly, which section 3.2 shows is
+false. The operational numbers are the policy in 6.2.*
+
 **Overlap matters.** F2 and F3 fire on 170 and 131 transactions, but 94 are the same transactions
 (79 of them fraud). Their union is **207**, not 301 — coverage cannot be added up.
 
@@ -140,7 +184,13 @@ Transactions by a user who already had a chargeback are **89.8% fraudulent** (26
 **82.6% of those transactions happen within 24 hours** of the charged-back one, while a real
 dispute takes days to weeks to reach the acquirer.
 
-Simulating a block list that holds every dispute already mature enough to be known:
+At first sight the signal looks unbeatable — a 17× jump over the same users' behaviour before
+their first chargeback:
+
+![Chargeback rate of 5.2% before a user's first chargeback against 89.8% after it](outputs/figures/05_repeat_offenders.png)
+
+Now the timing. Simulating a block list that holds every dispute already mature enough to be
+known:
 
 | Dispute known after | Transactions flagged | Frauds caught | % of all fraud | Precision |
 |---:|---:|---:|---:|---:|
@@ -150,7 +200,7 @@ Simulating a block list that holds every dispute already mature enough to be kno
 | 7 days | 36 | 31 | 7.9% | 86.1% |
 | 15 days | 2 | 1 | 0.3% | 50.0% |
 
-![Label timing](outputs/figures/07_label_timing.png)
+![Histogram showing 83% of follow-up transactions within 24h, and the rule's coverage collapsing as the dispute delay grows](outputs/figures/07_label_timing.png)
 
 Two conclusions, deliberately separated:
 
@@ -174,14 +224,6 @@ The same test was applied to the merchant rule (F5), where it also collapses. An
 The last 11 days hold **69% of the volume and 83% of the fraud** — Black Friday. The blended
 12.22% is the average of two different realities, and the policy performs differently in each
 (6.3).
-
-### 3.4 Supporting charts
-
-| | |
-|---|---|
-| ![Hourly](outputs/figures/01_chargeback_by_hour.png) | ![Amounts](outputs/figures/02_amount_distribution.png) |
-| ![Merchants](outputs/figures/03_chargeback_by_merchant.png) | ![Velocity](outputs/figures/04_chargeback_by_user_velocity.png) |
-| ![Repeat offenders](outputs/figures/05_repeat_offenders.png) | ![Rule performance](outputs/figures/06_rule_performance.png) |
 
 ---
 
@@ -297,7 +339,7 @@ Only the decline row is money prevented. **39.9% of fraud is stopped outright**,
 is routed** to a human or to an authentication challenge, and **27.9% still reaches approval**.
 81.5% of the base is approved with no friction.
 
-![Policy tiers](outputs/figures/08_policy_tiers.png)
+![Transactions and fraud split across the four decisions: 81.5% of the base approved, 39.9% of fraud declined outright](outputs/figures/08_policy_tiers.png)
 
 **Two stated assumptions, not measurements.**
 
